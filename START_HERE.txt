@@ -1,0 +1,3 @@
+THAN Quiz Assistant v0.4
+
+Giai nen ZIP, chay SETUP_ONE_CLICK.bat de cap nhat. Kho dap an cu duoc giu nguyen. Xem README_v0.4.txt.

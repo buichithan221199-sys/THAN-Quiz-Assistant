@@ -1,0 +1,1 @@
+v0.6.4: Improved matching for partially cropped Vietnamese OCR using shared distinctive phrases. Re-import the answer PDF after installation. Screen-choice mapping remains conservative: unmatched choices are shown as PDF reference, not falsely verified.
