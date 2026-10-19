@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -28,3 +28,17 @@ jobs:
           path: dist/THAN Quiz Assistant.exe
           if-no-files-found: error
           retention-days: 30
+      - name: Publish public Windows download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: pwsh
+        run: |
+          $tag = 'v1.0.1'
+          $asset = 'dist/THAN Quiz Assistant.exe'
+          $notes = 'THAN Quiz Assistant for Windows. OCR and PDF question matching. Developed by Chi Than Bui. Download the EXE below. Windows may show an unsigned-app warning.'
+          gh release view $tag --repo ${{ github.repository }} 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag $asset --clobber --repo ${{ github.repository }}
+          } else {
+            gh release create $tag $asset --target ${{ github.sha }} --title 'THAN Quiz Assistant v1.0.1' --notes $notes --repo ${{ github.repository }}
+          }
