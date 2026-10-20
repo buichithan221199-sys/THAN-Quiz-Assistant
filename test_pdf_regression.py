@@ -33,7 +33,7 @@ def test_real_uploaded_pdf_text():
     rows,unresolved=parse_pdf_questions(content)
     assert len(rows)==24, f"REAL PDF: parsed {len(rows)} instead of 24; unresolved={unresolved}"
     assert len([r for r in rows if r['answers']])==24, "REAL PDF: missing answer(s)"
-    expected=re.findall(r'(?m)^ĐÁP ÁN ĐÚNG:\\s*([A-Z])\\.',content)
+    expected=re.findall(r'(?m)^ĐÁP ÁN ĐÚNG:\s*([A-Z])\.',content)
     assert len(expected)==24, f"REAL PDF fixture has {len(expected)} answer labels"
     for i,(row,letter) in enumerate(zip(rows,expected),1):
         assert row['answer_letters']==[letter], f"Question {i}: expected {letter}, got {row['answer_letters']}"
