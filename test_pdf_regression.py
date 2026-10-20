@@ -25,3 +25,18 @@ def test_26_alternate_layout():
     print("PASS: 26/26 alternate-format questions and answers")
 if __name__=='__main__':
     test_26_alternate_layout()
+
+def test_real_uploaded_pdf_text():
+    from pathlib import Path
+    import re
+    content=Path(__file__).parent.joinpath('tests','real_24_questions.txt').read_text(encoding='utf-8')
+    rows,unresolved=parse_pdf_questions(content)
+    assert len(rows)==24, f"REAL PDF: parsed {len(rows)} instead of 24; unresolved={unresolved}"
+    assert len([r for r in rows if r['answers']])==24, "REAL PDF: missing answer(s)"
+    expected=re.findall(r'(?m)^ĐÁP ÁN ĐÚNG:\\s*([A-Z])\\.',content)
+    assert len(expected)==24, f"REAL PDF fixture has {len(expected)} answer labels"
+    for i,(row,letter) in enumerate(zip(rows,expected),1):
+        assert row['answer_letters']==[letter], f"Question {i}: expected {letter}, got {row['answer_letters']}"
+    print("PASS: REAL uploaded PDF text: 24/24 questions and exact answer letters")
+if __name__=='__main__':
+    test_real_uploaded_pdf_text()
