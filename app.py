@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import ImageFilter, ImageOps, ImageEnhance, Image, ImageTk
 
 APP='THAN Quiz Assistant'
-VERSION='1.0.5'
+VERSION='1.0.6'
 def asset_path(name):
  base=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
  return base/name
@@ -223,7 +223,7 @@ def read_pdf(path):
 
 class App:
  def __init__(self,root):
-  self.root=root;root.title(APP+' 1.0.5 — Windows');root.geometry('990x730');root.minsize(820,630)
+  self.root=root;root.title(APP+' 1.0.6 — Windows');root.geometry('990x730');root.minsize(820,630)
   self.items=[];self.current_pdf=None;self.cfg=load(CFG,{'region':[0,0,620,760],'next':[335,575],'threshold':0.78,'tesseract':''})
   self.active=False;self.busy=False;self.mode=tk.StringVar(value='manual');self.status=tk.StringVar(value='Sẵn sàng');self.choice=tk.StringVar(value='');self.match=None
   self.cfg.setdefault('region',[0,0,620,760]);self.cfg.setdefault('threshold',0.78);self.cfg.setdefault('next',[335,575]);self.cfg.setdefault('tesseract','')
@@ -258,7 +258,7 @@ class App:
   header=tk.Frame(self.root,bg=C['bg']);header.pack(fill='x',padx=24,pady=(20,12))
   if self.brand_icon is not None: tk.Label(header,image=self.brand_icon,bg=C['bg']).pack(side='left',padx=(0,12))
   tk.Label(header,text='◈  THAN QUIZ ASSISTANT',bg=C['bg'],fg=C['text'],font=('Segoe UI',23,'bold')).pack(side='left')
-  tk.Label(header,text='  v1.0.5  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
+  tk.Label(header,text='  v1.0.6  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
   tk.Label(header,textvariable=self.status,bg=C['bg'],fg=C['green'],font=('Segoe UI',11,'bold')).pack(side='right')
   tk.Label(self.root,text='Developed by Chi Than Bui   •   Smart OCR & PDF Matching',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10,'italic')).pack(side='bottom',pady=(0,9))
   tabs=ttk.Notebook(self.root);tabs.pack(fill='both',expand=True,padx=22,pady=(0,16))
@@ -387,17 +387,17 @@ class App:
    if not rows:
     messagebox.showwarning('Chưa nhập được',f'Không nhận diện được câu hỏi trong PDF.\\nCác trang ít văn bản: {empty}\\nHãy kiểm tra PDF hoặc dùng CSV.');return
    with_answers=sum(bool(row.get('answers')) for row in rows)
+   numbered=[int(x) for x in re.findall(r'(?im)^\\s*Câu\\s+(\\d+)\\s*[.):]',text)]
+   expected=set(numbered)
+   if expected and len(rows)<len(expected):
+    messagebox.showwarning('PDF chưa nhận diện đủ',f'Tài liệu có {len(expected)} câu đánh số, nhưng chỉ nhận diện {len(rows)} câu.\\nỨng dụng sẽ KHÔNG âm thầm nhập thiếu.\\nVui lòng gửi file để kiểm tra hoặc chọn tài liệu khác.')
+    return
    preview='\\n'.join(f'{row["question"][:85]} => {(" | ".join(row["answers"]) if row["answers"] else "[CHƯA CÓ ĐÁP ÁN]")[:90]}' for row in rows[:6])
    if not messagebox.askyesno('Xem trước PDF',f'Nhận diện {len(rows)} câu hỏi; {with_answers} câu có đáp án, {len(rows)-with_answers} câu cần kiểm tra.\\nCác trang cần OCR: {empty}\\n\\n{preview}\\n\\nDùng bộ câu hỏi này?'):return
    if replace:self.items.clear()
-   existing={norm(item.get('question','')):i for i,item in enumerate(self.items)}
+   # Keep each numbered question separate; similar wording is not proof of duplication.
    added=updated=0
-   for row in rows:
-    key=norm(row['question'])
-    if key in existing:
-     self.items[existing[key]]=row;updated+=1
-    else:
-     existing[key]=len(self.items);self.items.append(row);added+=1
+   self.items.extend(rows);added=len(rows)
    self.current_pdf=path
    self.match=None;self.last_verified=None
    self.refresh()
