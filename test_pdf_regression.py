@@ -13,3 +13,15 @@ def test_24():
 if __name__=='__main__':
     test_24()
     print("PASS: 24/24 questions, 24/24 answers; repeated question text preserved")
+
+def test_26_alternate_layout():
+    blocks=[]
+    for n in range(1,27):
+        blocks.append(f"Câu {n}. Bài học này giải thích vấn đề số {n}?\nA. Nội dung thứ nhất\nB. Nội dung thứ hai\nC. Nội dung thứ ba\nĐáp án đúng: C - C. Nội dung thứ ba")
+    rows,unresolved=parse_pdf_questions("\n\n".join(blocks))
+    assert len(rows)==26,(len(rows),unresolved)
+    assert len([x for x in rows if x['answers']])==26
+    assert all(x['answer_letters']==['C'] for x in rows)
+    print("PASS: 26/26 alternate-format questions and answers")
+if __name__=='__main__':
+    test_26_alternate_layout()
