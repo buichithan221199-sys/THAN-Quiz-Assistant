@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import ImageFilter, ImageOps, ImageEnhance, Image, ImageTk
 
 APP='THAN Quiz Assistant'
-VERSION='1.0'
+VERSION='1.0.2'
 def asset_path(name):
  base=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
  return base/name
@@ -130,34 +130,51 @@ def parse_options(text):
  return extract_question_and_options(text)
 
 def parse_pdf_questions(text):
- """Parse answer PDFs with 'Đáp án đúng: A, B - A. ...; B. ...' format."""
- chunks=re.split(r'(?im)^\s*câu\s*(?:hỏi\s*)?\d+\s*[.:)-]\s*',text)
+ """Import varied question layouts; keep unanswered questions for later review."""
+ text=re.sub(r'\\r\\n?', '\\n', text)
+ # Start a question at a numbered 'Câu', 'Câu hỏi', or 'Question' heading.
+ heading=re.compile(r'(?im)^\\s*(?:câu\\s*(?:hỏi\\s*)?|question\\s*|q\\s*)[#:.-]*\\s*(\\d+)\\s*[.):-]?\\s*')
+ matches=list(heading.finditer(text))
  rows=[];unresolved=[]
- for chunk in chunks[1:]:
+ for index,match in enumerate(matches):
+  chunk=text[match.end():matches[index+1].start() if index+1<len(matches) else len(text)]
   lines=[x.strip() for x in chunk.splitlines() if x.strip()]
-  marker=next((i for i,l in enumerate(lines) if re.match(r'^đáp\s*án\s*đúng\s*:',l,re.I)),None)
-  if marker is None:
-   unresolved.append(lines[0][:100] if lines else 'empty');continue
-  before=lines[:marker];raw=' '.join(lines[marker:])
-  # Remove footer if present, and extract answer labels BEFORE the dash.
-  raw=re.split(r'Đối chiếu:',raw,flags=re.I)[0]
-  m=re.search(r'đáp\s*án\s*đúng\s*:\s*([A-H](?:\s*[,;]\s*[A-H])*)\s*[-–]',raw,re.I)
-  opts={};q=[];current=None
-  for line in before:
-   option=re.match(r'^([A-H])[.):]\s*(.+)',line,re.I)
-   if option:
-    current=option.group(1).upper();opts[current]=option.group(2)
-   elif current:
-    opts[current]+=' '+line
-   elif not re.match(r'^Đối chiếu:',line,re.I):q.append(line)
-  question=' '.join(q).strip()
-  if not question or not m:
-   unresolved.append(question[:100]);continue
-  letters=re.findall(r'[A-H]',m.group(1).upper())
-  if any(letter not in opts for letter in letters):
-   unresolved.append(question[:100]);continue
-  rows.append({'question':question,'answers':[opts[x] for x in letters], 'answer_letters':letters,
-               'options':opts,'type':'multiple' if len(letters)>1 else 'single','source':'PDF'})
+  question=[];options={};answer_lines=[];current=None;in_answer=False
+  for line in lines:
+   if re.match(r'(?i)^(?:đáp\\s*án(?:\\s*đúng)?|đáp\\s*án\\s*chính\\s*xác|answer(?:\\s*key)?|correct\\s*answer|đúng)\\s*[:：-]',line):
+    in_answer=True;answer_lines.append(line);current=None;continue
+   if in_answer:
+    answer_lines.append(line);continue
+   option=re.match(r'^([A-Z])\\s*[.):-]\\s*(.+)',line,re.I)
+   if option and (options or question):
+    current=option.group(1).upper();options[current]=option.group(2).strip()
+   elif current:options[current]+=' '+line
+   else:question.append(line)
+  stem=' '.join(question).strip()
+  if not stem:
+   unresolved.append('Câu '+match.group(1)+': thiếu nội dung');continue
+  raw=' '.join(answer_lines)
+  raw=re.sub(r'(?i)^\\s*(?:đáp\\s*án(?:\\s*đúng)?|đáp\\s*án\\s*chính\\s*xác|answer(?:\\s*key)?|correct\\s*answer|đúng)\\s*[:：-]\\s*','',raw)
+  raw=re.split(r'(?i)\\b(?:giải\\s*thích|explanation|đối\\s*chiếu)\\s*:',raw)[0].strip()
+  # Parse any number of marked correct options; no artificial answer-count limit.
+  labels=[]
+  letter_pattern=r'[A-Z]'
+  head=re.match(r'^((?:[A-Z]\\s*(?:[,;/&+]|\\bvà\\b|\\band\\b|\\s+))*[A-Z])(?=\\s*(?:$|[-–—:.]))',raw,re.I)
+  if head:
+   labels=re.findall(letter_pattern,head.group(1).upper())
+  elif re.fullmatch(r'[A-Z](?:\\s*[,;/&+]\\s*[A-Z])*',raw,re.I):
+   labels=re.findall(letter_pattern,raw.upper())
+  elif re.fullmatch(r'(?i)(?:đúng|sai|true|false)',raw):
+   labels=[]
+  answers=[options[x] for x in labels if x in options]
+  if labels and len(answers)!=len(labels):answers=[]
+  if not answers and raw and not labels:
+   answers=[part.strip() for part in re.split(r'\\s*\\|\\s*',raw) if part.strip()]
+  row={'question':stem,'answers':answers,'answer_letters':labels if answers and labels else [],
+       'options':options,'type':'multiple' if len(answers)>1 else 'single',
+       'source':'PDF','needs_review':not bool(answers)}
+  rows.append(row)
+  if not answers:unresolved.append(stem[:100])
  return rows,unresolved
 
 def read_pdf(path):
@@ -165,13 +182,26 @@ def read_pdf(path):
  doc=fitz.open(path);parts=[];empty=[]
  for i,page in enumerate(doc):
   t=page.get_text('text',sort=True)
-  if len(t.strip())<30:empty.append(i+1)
+  if len(t.strip())<30:
+   empty.append(i+1)
+   if pytesseract:
+    try:
+     if os.name=='nt' and Path(r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe').exists():
+      pytesseract.pytesseract.tesseract_cmd=r'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
+     pix=page.get_pixmap(matrix=fitz.Matrix(2,2),alpha=False)
+     picture=Image.frombytes('RGB',[pix.width,pix.height],pix.samples)
+     langs=pytesseract.get_languages(config='')
+     lang='vie+eng' if 'vie' in langs else 'eng'
+     t=pytesseract.image_to_string(picture,lang=lang,config='--psm 3')
+    except Exception:
+     pass
   parts.append(t)
- return '\n'.join(parts),empty
+ doc.close()
+ return '\\n'.join(parts),empty
 
 class App:
  def __init__(self,root):
-  self.root=root;root.title(APP+' 1.0 — Windows');root.geometry('990x730');root.minsize(820,630)
+  self.root=root;root.title(APP+' 1.0.2 — Windows');root.geometry('990x730');root.minsize(820,630)
   self.items=load(DB,[]);self.cfg=load(CFG,{'region':[0,0,620,760],'next':[335,575],'threshold':0.78,'tesseract':''})
   self.active=False;self.busy=False;self.mode=tk.StringVar(value='manual');self.status=tk.StringVar(value='Sẵn sàng');self.choice=tk.StringVar(value='');self.match=None
   self.cfg.setdefault('region',[0,0,620,760]);self.cfg.setdefault('threshold',0.78);self.cfg.setdefault('next',[335,575]);self.cfg.setdefault('tesseract','')
@@ -206,7 +236,7 @@ class App:
   header=tk.Frame(self.root,bg=C['bg']);header.pack(fill='x',padx=24,pady=(20,12))
   if self.brand_icon is not None: tk.Label(header,image=self.brand_icon,bg=C['bg']).pack(side='left',padx=(0,12))
   tk.Label(header,text='◈  THAN QUIZ ASSISTANT',bg=C['bg'],fg=C['text'],font=('Segoe UI',23,'bold')).pack(side='left')
-  tk.Label(header,text='  v1.0  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
+  tk.Label(header,text='  v1.0.2  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
   tk.Label(header,textvariable=self.status,bg=C['bg'],fg=C['green'],font=('Segoe UI',11,'bold')).pack(side='right')
   tk.Label(self.root,text='Developed by Chi Than Bui   •   Smart OCR & PDF Matching',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10,'italic')).pack(side='bottom',pady=(0,9))
   tabs=ttk.Notebook(self.root);tabs.pack(fill='both',expand=True,padx=22,pady=(0,16))
@@ -314,7 +344,7 @@ class App:
   ttk.Label(win,text='Đáp án đúng (nhập nguyên văn; nhiều đáp án phân cách bằng |):').pack(anchor='w');a=tk.Text(win,height=4);a.pack(fill='x')
   def commit():
    question=q.get('1.0','end').strip();answers=[x.strip() for x in a.get('1.0','end').split('|') if x.strip()]
-   if not question or not answers:messagebox.showerror('Thiếu dữ liệu','Cần câu hỏi và đáp án.');return
+   if not question:messagebox.showerror('Thiếu dữ liệu','Cần nội dung câu hỏi.');return
    self.items.append({'question':question,'answers':answers,'type':'multiple' if len(answers)>1 else 'single'});self.save();self.refresh();win.destroy()
   ttk.Button(win,text='Lưu câu hỏi',command=commit).pack(pady=14)
  def delete(self):
@@ -329,7 +359,7 @@ class App:
    text,empty=read_pdf(path)
    rows,unresolved=parse_pdf_questions(text)
    if not rows:
-    messagebox.showwarning('Chưa nhập được',f'Không tìm được cặp câu hỏi + đáp án rõ ràng.\nTrang ít hoặc không có văn bản: {empty}\n\nPDF cần có dạng: Câu 1: ... / A. ... / Đáp án: A.\nPDF scan cần OCR trước.');return
+    messagebox.showwarning('Chưa nhập được',f'Không tìm thấy tiêu đề Câu 1, Câu 2... trong PDF.\\nCác trang ít văn bản (đã thử OCR nếu có): {empty}');return
    preview='\n'.join(f'{r["question"][:95]} => {" | ".join(r["answers"])[:85]}' for r in rows[:6])
    if not messagebox.askyesno('Kiểm tra trước khi nhập',f'Tìm được {len(rows)} câu có đáp án rõ ràng.\n{len(unresolved)} câu không nhận diện đủ.\nTrang cần OCR: {empty}\n\nXem mẫu:\n{preview}\n\nNhập các câu đã nhận diện?'):return
    existing={norm(r.get('question','')):i for i,r in enumerate(self.items)};new=[]
@@ -520,7 +550,12 @@ class App:
   box.pack(fill='both',expand=True,padx=18,pady=10)
   if positions:
    tk.Label(box,text=positions,bg=box['bg'],fg='#52e8bb',font=('Segoe UI',40,'bold')).pack(pady=(15,4))
-  tk.Label(box,text=body,bg=box['bg'],fg='white',font=('Segoe UI',19,'bold'),wraplength=560,justify='center').pack(expand=True,padx=16,pady=10)
+  answer_area=tk.Frame(box,bg=box['bg']);answer_area.pack(fill='both',expand=True,padx=12,pady=8)
+  scrollbar=tk.Scrollbar(answer_area);scrollbar.pack(side='right',fill='y')
+  answer_text=tk.Text(answer_area,bg=box['bg'],fg='white',font=('Segoe UI',16,'bold'),wrap='word',relief='flat',yscrollcommand=scrollbar.set)
+  answer_text.pack(side='left',fill='both',expand=True)
+  scrollbar.config(command=answer_text.yview)
+  answer_text.insert('1.0',body);answer_text.config(state='disabled')
   tk.Button(win,text='Đóng',command=self.close_answer_window,bg='#183454',fg='white',relief='flat',font=('Segoe UI',11)).pack(pady=(2,12))
   win.bind('<Escape>',lambda event:self.close_answer_window())
  def show_unverified(self,title,answer):
