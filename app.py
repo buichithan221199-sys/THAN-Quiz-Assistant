@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import ImageFilter, ImageOps, ImageEnhance, Image, ImageTk
 
 APP='THAN Quiz Assistant'
-VERSION='1.0.4'
+VERSION='1.0.5'
 def asset_path(name):
  base=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
  return base/name
@@ -130,51 +130,73 @@ def parse_options(text):
  return extract_question_and_options(text)
 
 def parse_pdf_questions(text):
- """Parse numbered Vietnamese/English quizzes and answer keys from PDF text."""
- text=re.sub(r'\\r\\n?', '\\n', text)
- heading=re.compile(r'(?im)^[ \\t]*(?:câu[ \\t]*(?:hỏi[ \\t]*)?|question[ \\t]*|q[ \\t]*)[#:.-]*[ \\t]*(\\d+)[ \\t]*[.):-]?[ \\t]*')
- matches=list(heading.finditer(text))
- rows=[];unresolved=[]
- for index,match in enumerate(matches):
-  chunk=text[match.end():matches[index+1].start() if index+1<len(matches) else len(text)]
-  lines=[x.strip() for x in chunk.splitlines() if x.strip()]
-  question=[];options={};answer_lines=[];current=None;in_answer=False
+ """Flexible best-effort quiz parser. Never fabricate an answer key."""
+ text=text.replace('\r\n','\n').replace('\r','\n')
+ lines=[re.sub(r'\s+',' ',x).strip() for x in text.split('\n')]
+ lines=[x for x in lines if x]
+ start=re.compile(r'^(?:(?:câu(?: hỏi)?|question|q)\s*[#:.]?\s*\d+\s*[.):\-]?\s*|\d+\s*[.):]\s+(?=\S))',re.I)
+ option=re.compile(r'^([A-H])\s*[.):\-]\s*(.+)$',re.I)
+ answer=re.compile(r'^(?:đáp\s*án(?:\s*đúng)?|đáp\s*án\s*chính\s*xác|answer(?:\s*key)?|correct\s*answer|đúng)\s*[:：\-]\s*(.*)$',re.I)
+ keyline=re.compile(r'^(?:câu\s*)?(\d+)\s*[.):\-]\s*([A-H](?:\s*[,;/&+]\s*[A-H])*)\s*$',re.I)
+ groups=[];current=[];key={}
+ # Split on explicit numbered questions, or after answer followed by new stem.
+ for line in lines:
+  km=keyline.match(line)
+  if km and not current:
+   key[int(km.group(1))]=re.findall('[A-H]',km.group(2).upper());continue
+  if start.match(line) and current:
+   groups.append(current);current=[]
+  current.append(line)
+ if current:groups.append(current)
+ # Fallback: unnumbered questions separated by options and/or answer lines.
+ if len(groups)<=1:
+  groups=[];current=[];seen_options=False;seen_answer=False
   for line in lines:
-   answer_start=re.match(r'(?i)^(?:đáp[ \\t]*án(?:[ \\t]*đúng)?|answer(?:[ \\t]*key)?|correct[ \\t]*answer)[ \\t]*[:：-][ \\t]*(.*)',line)
-   if answer_start:
-    in_answer=True;answer_lines.append(answer_start.group(1));current=None;continue
-   if in_answer:
-    answer_lines.append(line);continue
-   option=re.match(r'^([A-Z])[ \\t]*[.):-][ \\t]*(.+)',line,re.I)
-   if option:
-    current=option.group(1).upper();options[current]=option.group(2).strip()
-   elif current:
-    options[current]+=' '+line
-   else:
-    question.append(line)
-  stem=' '.join(question).strip()
-  if not stem:
-   unresolved.append('Câu '+match.group(1)+': thiếu câu hỏi');continue
-  raw=' '.join(answer_lines).strip()
-  raw=re.split(r'(?i)\\b(?:giải[ \\t]*thích|explanation|đối[ \\t]*chiếu)[ \\t]*:',raw)[0].strip()
-  # A. answer text, A/B, A, B, and any number of correct choices.
-  label_prefix=re.match(r'^([A-Z])[ \\t]*[.):-][ \\t]*(.*)',raw,re.I)
-  letters=[]
-  if label_prefix and label_prefix.group(1).upper() in options:
-   letters=[label_prefix.group(1).upper()]
+   om=option.match(line)
+   am=answer.match(line)
+   if current and not om and not am and (seen_answer or (seen_options and line.endswith('?'))):
+    groups.append(current);current=[];seen_options=False;seen_answer=False
+   current.append(line)
+   seen_options|=bool(om);seen_answer|=bool(am)
+  if current:groups.append(current)
+ rows=[];unresolved=[]
+ for group in groups:
+  stem=[];opts={};raw=[];last=None;answer_mode=False
+  for line in group:
+   am=answer.match(line)
+   if am:
+    answer_mode=True;last=None;raw.append(am.group(1));continue
+   if answer_mode:
+    raw.append(line);continue
+   om=option.match(line)
+   if om and (stem or opts):
+    last=om.group(1).upper();opts[last]=om.group(2);continue
+   if last:opts[last]+=' '+line
+   else:stem.append(line)
+  question=' '.join(stem).strip()
+  question=start.sub('',question,count=1).strip()
+  if not question or not opts:
+   unresolved.append(question[:100] or 'Không nhận diện được câu hỏi');continue
+  raw_text=' '.join(raw).strip()
+  raw_text=re.split(r'(?:giải thích|explanation|đối chiếu)\s*:',raw_text,flags=re.I)[0].strip()
+  # Accept key letters only when clearly delimited; otherwise preserve literal answer text.
+  labels=[]
+  labeled=re.match(r'^([A-H])\s*[.):\-]\s*(.*)$',raw_text,re.I)
+  if labeled:labels=[labeled.group(1).upper()]
   else:
-   bare=re.match(r'^([A-Z](?:[ \\t]*[,;/&+][ \\t]*[A-Z])*)(?=$|[ \\t]*[-–—:.])',raw,re.I)
-   if bare:
-    letters=re.findall(r'[A-Z]',bare.group(1).upper())
-  answers=[options[x] for x in letters if x in options]
-  if len(answers)!=len(letters):answers=[]
-  if not answers and raw and not letters:
-   answers=[x.strip() for x in raw.split('|') if x.strip()]
-  row={'question':stem,'answers':answers,'answer_letters':letters if answers else [],
-       'options':options,'type':'multiple' if len(answers)>1 else 'single',
-       'source':'PDF','needs_review':not bool(answers)}
-  rows.append(row)
-  if not answers:unresolved.append(stem[:100])
+   label_list=re.fullmatch(r'[A-H](?:\s*[,;/&+]\s*[A-H])*',raw_text,re.I)
+   if label_list:labels=re.findall('[A-H]',raw_text.upper())
+  answers=[opts[x] for x in labels if x in opts]
+  if labels and len(answers)!=len(labels):answers=[]
+  if not answers and raw_text and not labels:answers=[raw_text]
+  number_match=re.search(r'(?:câu(?: hỏi)?|question|q)\s*[#:.]?\s*(\d+)',group[0],re.I)
+  if not answers and number_match:
+   for letter in key.get(int(number_match.group(1)),[]):
+    if letter in opts:answers.append(opts[letter])
+  rows.append({'question':question,'answers':answers,'answer_letters':labels if answers else [],
+               'options':opts,'type':'multiple' if len(answers)>1 else 'single',
+               'source':'PDF','needs_review':not bool(answers)})
+  if not answers:unresolved.append(question[:100])
  return rows,unresolved
 
 def read_pdf(path):
@@ -201,7 +223,7 @@ def read_pdf(path):
 
 class App:
  def __init__(self,root):
-  self.root=root;root.title(APP+' 1.0.4 — Windows');root.geometry('990x730');root.minsize(820,630)
+  self.root=root;root.title(APP+' 1.0.5 — Windows');root.geometry('990x730');root.minsize(820,630)
   self.items=[];self.current_pdf=None;self.cfg=load(CFG,{'region':[0,0,620,760],'next':[335,575],'threshold':0.78,'tesseract':''})
   self.active=False;self.busy=False;self.mode=tk.StringVar(value='manual');self.status=tk.StringVar(value='Sẵn sàng');self.choice=tk.StringVar(value='');self.match=None
   self.cfg.setdefault('region',[0,0,620,760]);self.cfg.setdefault('threshold',0.78);self.cfg.setdefault('next',[335,575]);self.cfg.setdefault('tesseract','')
@@ -236,7 +258,7 @@ class App:
   header=tk.Frame(self.root,bg=C['bg']);header.pack(fill='x',padx=24,pady=(20,12))
   if self.brand_icon is not None: tk.Label(header,image=self.brand_icon,bg=C['bg']).pack(side='left',padx=(0,12))
   tk.Label(header,text='◈  THAN QUIZ ASSISTANT',bg=C['bg'],fg=C['text'],font=('Segoe UI',23,'bold')).pack(side='left')
-  tk.Label(header,text='  v1.0.4  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
+  tk.Label(header,text='  v1.0.5  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
   tk.Label(header,textvariable=self.status,bg=C['bg'],fg=C['green'],font=('Segoe UI',11,'bold')).pack(side='right')
   tk.Label(self.root,text='Developed by Chi Than Bui   •   Smart OCR & PDF Matching',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10,'italic')).pack(side='bottom',pady=(0,9))
   tabs=ttk.Notebook(self.root);tabs.pack(fill='both',expand=True,padx=22,pady=(0,16))
