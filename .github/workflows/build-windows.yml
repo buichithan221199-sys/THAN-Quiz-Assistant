@@ -24,7 +24,7 @@ jobs:
       - name: Upload Windows executable
         uses: actions/upload-artifact@v4
         with:
-          name: THAN-Quiz-Assistant-v1.0.3-Windows
+          name: THAN-Quiz-Assistant-v1.0.4-Windows
           path: dist/THAN Quiz Assistant.exe
           if-no-files-found: error
           retention-days: 30
@@ -33,7 +33,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: pwsh
         run: |
-          $tag = 'v1.0.3'
+          $tag = 'v1.0.4'
           Copy-Item 'dist/THAN Quiz Assistant.exe' 'dist/THAN-Quiz-Assistant.exe' -Force
           $asset = 'dist/THAN-Quiz-Assistant.exe'
           $notes = 'THAN Quiz Assistant for Windows. OCR and PDF question matching. Developed by Chi Than Bui. Download the EXE below. Windows may show an unsigned-app warning.'
@@ -41,5 +41,5 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag $asset --clobber --repo ${{ github.repository }}
           } else {
-            gh release create $tag $asset --target ${{ github.sha }} --title 'THAN Quiz Assistant v1.0.3' --notes $notes --repo ${{ github.repository }}
+            gh release create $tag $asset --target ${{ github.sha }} --title 'THAN Quiz Assistant v1.0.4' --notes $notes --repo ${{ github.repository }}
           }
