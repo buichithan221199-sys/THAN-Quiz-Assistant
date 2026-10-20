@@ -182,7 +182,7 @@ def parse_pdf_questions(text):
   # Accept key letters only when clearly delimited; otherwise preserve literal answer text.
   labels=[]
   multi=re.match(r'^([A-Z](?:\s*[,;/&+]\s*[A-Z])+)(?:\s*[-:]\s*|$)',raw_text,re.I)
-  labeled=re.match(r'^([A-Z])\s*[.):\-]\s*(.*)
+  labeled=re.match(r'^([A-Z])\s*[.):\-]\s*(.*)$',raw_text,re.I)
   if multi:labels=re.findall('[A-Z]',multi.group(1).upper())
   elif labeled:labels=[labeled.group(1).upper()]
   else:
