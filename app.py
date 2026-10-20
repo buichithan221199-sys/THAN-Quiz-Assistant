@@ -4,7 +4,7 @@ from pathlib import Path
 from PIL import ImageFilter, ImageOps, ImageEnhance, Image, ImageTk
 
 APP='THAN Quiz Assistant'
-VERSION='1.0.2'
+VERSION='1.0.3'
 def asset_path(name):
  base=Path(getattr(sys,'_MEIPASS',Path(__file__).resolve().parent))
  return base/name
@@ -201,12 +201,12 @@ def read_pdf(path):
 
 class App:
  def __init__(self,root):
-  self.root=root;root.title(APP+' 1.0.2 — Windows');root.geometry('990x730');root.minsize(820,630)
-  self.items=load(DB,[]);self.cfg=load(CFG,{'region':[0,0,620,760],'next':[335,575],'threshold':0.78,'tesseract':''})
+  self.root=root;root.title(APP+' 1.0.3 — Windows');root.geometry('990x730');root.minsize(820,630)
+  self.items=[];self.current_pdf=None;self.cfg=load(CFG,{'region':[0,0,620,760],'next':[335,575],'threshold':0.78,'tesseract':''})
   self.active=False;self.busy=False;self.mode=tk.StringVar(value='manual');self.status=tk.StringVar(value='Sẵn sàng');self.choice=tk.StringVar(value='');self.match=None
   self.cfg.setdefault('region',[0,0,620,760]);self.cfg.setdefault('threshold',0.78);self.cfg.setdefault('next',[335,575]);self.cfg.setdefault('tesseract','')
   self.last_ocr='';self.answer_window=None;self.answer_signature=None;self.capture_running=False;self.overlay_status=None;self.brand_icon=None;self.brand_logo=None;self.build()
- def save(self):DB.write_text(json.dumps(self.items,ensure_ascii=False,indent=2),encoding='utf-8');CFG.write_text(json.dumps(self.cfg,ensure_ascii=False,indent=2),encoding='utf-8')
+ def save(self):CFG.write_text(json.dumps(self.cfg,ensure_ascii=False,indent=2),encoding='utf-8')
  def build(self):
   C={'bg':'#071225','panel':'#101f36','panel2':'#152941','blue':'#1677ff','text':'#eff6ff','muted':'#a9bfdc','green':'#20dfad'}
   self.root.configure(bg=C['bg'])
@@ -236,7 +236,7 @@ class App:
   header=tk.Frame(self.root,bg=C['bg']);header.pack(fill='x',padx=24,pady=(20,12))
   if self.brand_icon is not None: tk.Label(header,image=self.brand_icon,bg=C['bg']).pack(side='left',padx=(0,12))
   tk.Label(header,text='◈  THAN QUIZ ASSISTANT',bg=C['bg'],fg=C['text'],font=('Segoe UI',23,'bold')).pack(side='left')
-  tk.Label(header,text='  v1.0.2  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
+  tk.Label(header,text='  v1.0.3  •  Windows',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10)).pack(side='left')
   tk.Label(header,textvariable=self.status,bg=C['bg'],fg=C['green'],font=('Segoe UI',11,'bold')).pack(side='right')
   tk.Label(self.root,text='Developed by Chi Than Bui   •   Smart OCR & PDF Matching',bg=C['bg'],fg=C['muted'],font=('Segoe UI',10,'italic')).pack(side='bottom',pady=(0,9))
   tabs=ttk.Notebook(self.root);tabs.pack(fill='both',expand=True,padx=22,pady=(0,16))
@@ -262,7 +262,7 @@ class App:
   self.result=tk.Text(quiz,height=7,bg='#092e2c',fg='#d4fff3',wrap='word',relief='flat',padx=18,pady=14,font=('Segoe UI',11))
   self.result.pack(fill='both',expand=True,padx=16,pady=(0,12));self.result.configure(state='disabled')
   bt=ttk.Frame(bank);bt.pack(fill='x',padx=14,pady=15)
-  for label,fn in [('＋ Nhập PDF',self.import_pdf),('Nhập CSV',self.import_csv),('Xuất CSV mẫu',self.export_template),('Thêm câu hỏi',self.add),('Xóa mục chọn',self.delete)]:
+  for label,fn in [('＋ Nhập PDF',self.import_pdf),('⇄ Thay PDF khác',self.replace_pdf),('Nhập CSV',self.import_csv),('Xuất CSV mẫu',self.export_template),('Thêm câu hỏi',self.add),('Xóa mục chọn',self.delete)]:
    ttk.Button(bt,text=label,command=fn).pack(side='left',padx=4)
   self.tree=ttk.Treeview(bank,columns=('q','a','type'),show='headings')
   for col,label,width in [('q','Câu hỏi',470),('a','Đáp án (nội dung)',340),('type','Loại',110)]:
@@ -345,32 +345,44 @@ class App:
   def commit():
    question=q.get('1.0','end').strip();answers=[x.strip() for x in a.get('1.0','end').split('|') if x.strip()]
    if not question:messagebox.showerror('Thiếu dữ liệu','Cần nội dung câu hỏi.');return
-   self.items.append({'question':question,'answers':answers,'type':'multiple' if len(answers)>1 else 'single'});self.save();self.refresh();win.destroy()
+   self.items.append({'question':question,'answers':answers,'type':'multiple' if len(answers)>1 else 'single'});self.refresh();win.destroy()
   ttk.Button(win,text='Lưu câu hỏi',command=commit).pack(pady=14)
  def delete(self):
   ids=sorted([int(i) for i in self.tree.selection()],reverse=True)
   if ids and messagebox.askyesno('Xóa','Xóa câu hỏi đã chọn?'):
    for i in ids:self.items.pop(i)
-   self.save();self.refresh()
- def import_pdf(self):
+   self.refresh()
+ def replace_pdf(self):
+  if self.items and not messagebox.askyesno('Thay PDF khác','Xóa toàn bộ câu hỏi trong phiên hiện tại và chọn PDF khác?'):return
+  self.import_pdf(replace=True)
+
+ def import_pdf(self,replace=False):
   path=filedialog.askopenfilename(title='Chọn PDF câu hỏi và đáp án',filetypes=[('PDF','*.pdf')])
   if not path:return
   try:
    text,empty=read_pdf(path)
    rows,unresolved=parse_pdf_questions(text)
    if not rows:
-    messagebox.showwarning('Chưa nhập được',f'Không tìm thấy tiêu đề Câu 1, Câu 2... trong PDF.\\nCác trang ít văn bản (đã thử OCR nếu có): {empty}');return
-   preview='\n'.join(f'{r["question"][:95]} => {" | ".join(r["answers"])[:85]}' for r in rows[:6])
-   if not messagebox.askyesno('Kiểm tra trước khi nhập',f'Tìm được {len(rows)} câu có đáp án rõ ràng.\n{len(unresolved)} câu không nhận diện đủ.\nTrang cần OCR: {empty}\n\nXem mẫu:\n{preview}\n\nNhập các câu đã nhận diện?'):return
-   existing={norm(r.get('question','')):i for i,r in enumerate(self.items)};new=[]
-   for r in rows:
-    key=norm(r['question'])
-    if key in existing:self.items[existing[key]]=r
-    else:new.append(r)
-   self.items.extend(new);self.save();self.refresh()
-   messagebox.showinfo('Đã nhập PDF',f'Đã lưu {len(new)} câu mới. Cập nhật {len(rows)-len(new)} câu trùng.\nCâu chưa phân tích được: {len(unresolved)}.\nHãy kiểm tra đáp án trước khi sử dụng.')
-  except ImportError:messagebox.showerror('Thiếu thư viện','Chạy install.bat để cài PyMuPDF.')
-  except Exception as e:messagebox.showerror('Lỗi đọc PDF',str(e))
+    messagebox.showwarning('Chưa nhập được',f'Không nhận diện được câu hỏi trong PDF.\\nCác trang ít văn bản: {empty}\\nHãy kiểm tra PDF hoặc dùng CSV.');return
+   with_answers=sum(bool(row.get('answers')) for row in rows)
+   preview='\\n'.join(f'{row["question"][:85]} => {(" | ".join(row["answers"]) if row["answers"] else "[CHƯA CÓ ĐÁP ÁN]")[:90]}' for row in rows[:6])
+   if not messagebox.askyesno('Xem trước PDF',f'Nhận diện {len(rows)} câu hỏi; {with_answers} câu có đáp án, {len(rows)-with_answers} câu cần kiểm tra.\\nCác trang cần OCR: {empty}\\n\\n{preview}\\n\\nDùng bộ câu hỏi này?'):return
+   if replace:self.items.clear()
+   existing={norm(item.get('question','')):i for i,item in enumerate(self.items)}
+   added=updated=0
+   for row in rows:
+    key=norm(row['question'])
+    if key in existing:
+     self.items[existing[key]]=row;updated+=1
+    else:
+     existing[key]=len(self.items);self.items.append(row);added+=1
+   self.current_pdf=path
+   self.match=None;self.last_verified=None
+   self.refresh()
+   self.status.set(f'PDF: {Path(path).name} — {len(self.items)} câu')
+   messagebox.showinfo('Đã nhập PDF',f'Tệp: {Path(path).name}\\n{added} câu mới, {updated} câu cập nhật.\\n{with_answers} câu có đáp án; {len(rows)-with_answers} câu cần kiểm tra.\\nDữ liệu chỉ tồn tại đến khi thoát ứng dụng.')
+  except ImportError:messagebox.showerror('Thiếu thư viện','Cần cài PyMuPDF.')
+  except Exception as exc:messagebox.showerror('Lỗi đọc PDF',str(exc))
  def import_csv(self):
   path=filedialog.askopenfilename(filetypes=[('CSV UTF-8','*.csv')]);
   if not path:return
@@ -380,7 +392,7 @@ class App:
     for row in csv.DictReader(f):
      q=(row.get('question') or row.get('cau_hoi') or '').strip();a=(row.get('answers') or row.get('dap_an') or '').strip()
      if q and a:self.items.append({'question':q,'answers':[v.strip() for v in a.split('|') if v.strip()],'type':row.get('type','single')});n+=1
-   self.save();self.refresh();messagebox.showinfo('Hoàn tất',f'Đã nhập {n} câu hỏi.')
+   self.refresh();messagebox.showinfo('Hoàn tất',f'Đã nhập {n} câu hỏi.')
   except Exception as e:messagebox.showerror('Lỗi CSV',str(e))
  def export_template(self):
   p=filedialog.asksaveasfilename(defaultextension='.csv',initialfile='mau_dap_an.csv')
